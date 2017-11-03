@@ -1,0 +1,21 @@
+@font-face {
+	font-family: Roboto;
+	src: url(/static/Roboto-thin.ttf);
+	font-weight: 100;
+}
+html,body {
+	font-family: Roboto, Arial, sans-serif;
+	font-size: 14px;
+	color: #333;
+	margin: 0;
+	padding: 0;
+}
+h1,h2,h3 {
+	font-weight: normal;
+	text-transform: uppercase;
+}
+.content {
+	max-width: 800px;
+	margin: 0 20%;
+	text-align: justify;
+}
