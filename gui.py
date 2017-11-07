@@ -7,6 +7,7 @@ import websockets
 
 
 app = Flask(__name__)
+ws = set()
 
 
 @app.route('/')
@@ -20,9 +21,15 @@ def favicon():
 
 
 async def feed(websocket, path):
-    async for message in websocket:
-        print(message)
-        await websocket.send(message)
+    ws.add(websocket)
+    try:
+        async for message in websocket:
+            print(message)
+            await asyncio.wait([w.send(message) for w in ws])
+    except Exception as e:
+        print(e)
+    finally:
+        ws.remove(websocket)
 
 
 def run_websocket():
