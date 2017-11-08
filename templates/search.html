@@ -2,6 +2,8 @@
 <html>
  <head>
   <link rel="stylesheet" type="text/css" href="/static/main.css">
+  <script src="/static/jquery.min.js"></script>
+  <script src="/static/job.js"></script>
   <title>Search</title>
  </head>
  <body>
@@ -11,13 +13,22 @@
     <h3>{{group}}</h3>
     <p>Feeders: {{feeders|join(', ')}}</p>
     <p>Agents:  {{agents|join(', ')}}</p>
-    <form>
+    <form method="POST">
       {% for inp in inputs %}
         <label>{{inp}}</label>
         <input type="text" name="{{inp}}"/>
       {% endfor %}
       <input type="submit"/>
     </form>
+    {% if job %}
+    <h3>Result:</h3>
+    <div class="result">
+      Please wait while loading...
+    </div>
+    <script>
+      job.loadDom(".result", "/api/job/{{job}}?dom");
+    </script>
+    {% endif %}
   </div>
  </body>
 </html>

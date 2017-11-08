@@ -18,6 +18,9 @@ token = '441234567890=='
 agents = {
 }
 ws = None
+agent_job = 1
+agent_job2queue = {
+}
 
 
 def handle_agent_action(sock, agent, action, data):
@@ -33,9 +36,9 @@ def handle_agent_action(sock, agent, action, data):
         return dict(status='ok', result='pong')
     elif action == 'reply':
         agents[agent]['time'] = time.time()
-        id = data['id']
-        outputs = data['outputs']
-        forward(agent, id, outputs)
+        job = data['id']
+        data = data['data']
+        forward(agent, job, data)
         return dict(status='ok')
 
 
@@ -52,9 +55,10 @@ def handle_agent(sock):
             r = handle_agent_action(sock, agent, action, data)
             if 'agent' in r:
                 agent = r['agent']
-            r['action'] = 'reply'
-            sock.send(json.dumps(r).encode())
-            if iterations == 1:
+            if action != 'reply':
+                r['action'] = 'reply'
+                sock.send(json.dumps(r).encode())
+            if action == 'register':
                 output_status()
             iterations += 1
     except (ConnectionResetError, ConnectionAbortedError, json.decoder.JSONDecodeError) as e:
@@ -63,6 +67,8 @@ def handle_agent(sock):
             remove_agent(agent)
             del agents[agent]
             output_status()
+    finally:
+        sock.close()
 
 
 def service_agents():
@@ -74,9 +80,9 @@ def service_agents():
         Thread(target=handle_agent, args=(conn,)).start()
 
 
-def find(find_data):
+def send_find(find_data):
     print('find data:', find_data)
-    sent = 0
+    sent_to = []
     for agent,agent_data in agents.items():
         inputs = agent_data['inputs']
         print('agent data: ', agent_data)
@@ -88,8 +94,8 @@ def find(find_data):
         query_data['id'] = find_data['id']
         sock = agent_data['socket']
         sock.send(json.dumps(query_data).encode())
-        sent += 1
-    return 'ok' if sent else 'unavailable'
+        sent_to += [agent]
+    return sent_to
 
 
 def add_agent(agent):
@@ -97,7 +103,7 @@ def add_agent(agent):
     if ws:
         websocket = ws
         a = agents[agent]
-        message = json.dumps(dict(action='add-agent', msgid='2', agent=agent, inputs=list(a['inputs']), outputs=list(a['outputs'])))
+        message = json.dumps(dict(action='add-agent', agent=agent, inputs=list(a['inputs']), outputs=list(a['outputs'])))
         ws_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(websocket.send(message)))
 
 
@@ -105,8 +111,43 @@ def remove_agent(agent):
     global ws
     if ws:
         websocket = ws
-        message = json.dumps(dict(action='remove-agent', msgid='3', agent=agent))
+        message = json.dumps(dict(action='remove-agent', agent=agent))
         ws_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(websocket.send(message)))
+
+
+def forward(agent, job, data):
+    data['agent'] = agent
+    print('forwarding', data)
+    ws_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(agent_job2queue[job].put(data)))
+
+
+async def handle_hoarder_action(websocket, action, data):
+    if action == 'find':
+        global agent_job, agent_job2queue
+        find_data = dict(data['data'])
+        find_data['id'] = agent_job
+        job = agent_job
+        agent_job += 1
+        agent_job2queue[job] = asyncio.Queue()
+        agents = send_find(find_data)
+        agents_data = {agent:{} for agent in agents}
+        recv_cnt = len(agents)
+        print('find waiting for %i answers...' % recv_cnt)
+        for cnt in range(recv_cnt): # explicit about count
+            r = await agent_job2queue[job].get()
+            print('find got a reply:', r)
+            agent = r['agent']
+            agents_data[agent].update(r)
+            del agents_data[agent]['agent']
+            reply = dict(status=('ok' if cnt==recv_cnt-1 else 'ok-partial'), action='reply', job=data['job'], data=agents_data)
+            print('find partial reply:', reply)
+            await websocket.send(json.dumps(reply))
+        print('find done')
+    elif action == 'reply':
+        pass
+    else:
+        print(data)
+        assert False
 
 
 async def slave(uri):
@@ -123,12 +164,17 @@ async def slave(uri):
                 timestamp = datetime.now().isoformat()
                 digest = hashlib.md5((timestamp+'|'+token).encode()).hexdigest()
                 digest = timestamp + '|' + digest
-                data = json.dumps(dict(action='register', msgid='1', feeder='', company=company, department=department, group=group, digest=digest))
+                data = json.dumps(dict(action='register', company=company, department=department, group=group, digest=digest))
                 await websocket.send(data)
                 connected2hoarder = True
                 while True:
-                    print(await websocket.recv())
-        except:
+                    raw = await websocket.recv()
+                    data = json.loads(raw)
+                    print('got hoarder data:', data)
+                    action = data['action']
+                    await handle_hoarder_action(websocket, action, data)
+        except Exception as e:
+            print(type(e), e)
             pass
 
 
@@ -139,11 +185,12 @@ def service_master():
 
 
 def cleanup_agents():
-    for agent,agent_data in list(agents.items()):
-        t = agent_data['time']
-        if time.time()-t > 30:
-            remove_agent(agent)
-            del agents[agent]
+    # for agent,agent_data in list(agents.items()):
+        # t = agent_data['time']
+        # if time.time()-t > 60:
+            # remove_agent(agent)
+            # del agents[agent]
+    pass
 
 
 def output_status():

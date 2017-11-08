@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
-from flask import Flask, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 import hashlib
 import json
 from threading import Thread
@@ -11,6 +11,8 @@ import websockets
 app = Flask(__name__)
 tokens = {'hm': '441234567890=='}
 websocket2feeder = {}
+jobindex = 1
+job2reply = {}
 
 
 @app.route('/')
@@ -18,19 +20,56 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/<company>/<department>/<group>')
-def get_search_page(company, department='', group=''):
+@app.route('/search/<company>/<department>/<group>', methods=['GET','POST'])
+def search_page(company, department='', group=''):
     feeders = [values for values in websocket2feeder.values() if values['company'] == company]
     feeder_names = [feeder['group'].partition('-')[2] for feeder in feeders]
     agents = [agent for feeder in feeders for agent in feeder['agent2data'].keys()]
     inputs = [inp for feeder in feeders for agent_data in feeder['agent2data'].values() for inp in agent_data['inputs']]
     inputs = set(inputs)
-    return render_template('search.html', company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs)
+    values = {k:v for k,v in request.values.items()}
+    job = None
+    if values:
+        global jobindex
+        job = jobid(jobindex)
+        jobindex += 1
+        job2reply[job] = {}
+        for websocket, feeder_data in websocket2feeder.items():
+            if feeder_data['company'] == company:
+                send2feeder(websocket, dict(action='find', job=job, data=dict(values)))
+    return render_template('search.html', company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs, job=job)
+
+
+@app.route('/api/job/<job>')
+def get_job(job):
+    if job in job2reply:
+        reply = job2reply[job]
+        result = dict(reply)
+        del result['action']
+        del result['job']
+        if request.values.get('dom') != None:
+            del result['data']
+            result['dom'] = render_template('result.html', agents_data=reply['data'])
+        return jsonify(result)
 
 
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory('static', 'favicon.ico', mimetype='image/x-icon')
+
+
+def jobid(idx):
+    return hashlib.md5(('whoot'+str(idx)+'?! 98732').encode()).hexdigest()[5:16]
+
+
+def send2feeder(websocket, obj):
+    data = json.dumps(obj)
+    print('sending to feeder:', data)
+    main_event_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(websocket.send(data)))
+
+
+def present_result(job, reply):
+    job2reply[job] = reply
 
 
 def handle_action(websocket, action, data):
@@ -60,8 +99,9 @@ def handle_action(websocket, action, data):
             del agent2data[agent]
         return dict(status='ok')
     elif action == 'reply':
-        present('something')
-        agent = data['agent']
+        print('GOT REPLY:', action, data)
+        job = data['job']
+        present_result(job, data)
         return dict(status='ok')
 
 
@@ -69,13 +109,11 @@ async def handle(websocket, path):
     try:
         async for message in websocket:
             data = json.loads(message)
-            msgid = data['msgid']
             action = data['action']
             r = handle_action(websocket, action, data)
             if action != 'reply':
                 r['action'] = 'reply'
                 r['reference-action'] = action
-                r['msgid'] = msgid+'-reply'
                 await websocket.send(json.dumps(r))
     except Exception as e:
         print(e)
@@ -85,9 +123,11 @@ async def handle(websocket, path):
 
 
 def run_websocket():
-    asyncio.get_event_loop().run_until_complete(
+    global main_event_loop
+    main_event_loop = asyncio.get_event_loop()
+    main_event_loop.run_until_complete(
         websockets.serve(handle, '0.0.0.0', 5001))
-    asyncio.get_event_loop().run_forever()
+    main_event_loop.run_forever()
 
 
 def run():
