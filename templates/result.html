@@ -1,9 +1,14 @@
 {% for agent,agent_data in agents_data.items() %}
   <h4>{{agent}}</h3>
   {% for key,value in agent_data.items() %}
-    <div class="result-row">
+    <div class="result-row key-value-row">
       <label>{{key}}</label>
       <input type="text" value="{{value}}"/>
     </div>
   {% endfor %}
+  {% if not agent_data %}
+    <div class="result-row key-value-row">
+      <p class="loading">Please wait, loading...</p>
+    </div>
+  {% endif %}
 {% endfor %}

@@ -15,14 +15,16 @@
     <p>Agents:  {{agents|join(', ')}}</p>
     <form method="POST">
       {% for inp in inputs %}
-        <label>{{inp}}</label>
-        <input type="text" name="{{inp}}"/>
+        <div class="key-value-row">
+          <label>{{inp}}</label>
+          <input type="text" name="{{inp}}"/>
+        </div>
       {% endfor %}
       <input type="submit"/>
     </form>
     {% if job %}
     <h3>Result:</h3>
-    <div class="result">
+    <div class="result key-value">
       Please wait while loading...
     </div>
     <script>

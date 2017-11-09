@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+from collections import OrderedDict
 from datetime import datetime
 import hashlib
 import json
@@ -10,6 +11,7 @@ from threading import Thread
 import websockets
 
 
+json_decoder = json.JSONDecoder(object_pairs_hook=OrderedDict)
 connected2hoarder = False
 company = 'hm'
 department = 'cf'
@@ -44,14 +46,12 @@ def handle_agent_action(sock, agent, action, data):
 
 def handle_agent(sock):
     agent = None
-    iterations = 1
-    try:
-        while True:
+    while True:
+        try:
             raw = sock.recv(32000).decode()
-            data = json.loads(raw)
+            #data = json.loads(raw)
+            data = json_decoder.decode(raw)
             action = data['action']
-            if iterations == 1:
-                assert action == 'register'
             r = handle_agent_action(sock, agent, action, data)
             if 'agent' in r:
                 agent = r['agent']
@@ -60,15 +60,18 @@ def handle_agent(sock):
                 sock.send(json.dumps(r).encode())
             if action == 'register':
                 output_status()
-            iterations += 1
-    except (ConnectionResetError, ConnectionAbortedError, json.decoder.JSONDecodeError) as e:
-        print('error:', e)
-        if agent:
-            remove_agent(agent)
-            del agents[agent]
-            output_status()
-    finally:
-        sock.close()
+        except (ConnectionResetError, ConnectionAbortedError) as e:
+            import traceback
+            traceback.print_exc()
+            if agent:
+                remove_agent(agent)
+                del agents[agent]
+                output_status()
+            break
+        except json.decoder.JSONDecodeError as e:
+            print('data error from agent', agent, type(e), e)
+            print('raw data:', raw)
+    sock.close()
 
 
 def service_agents():
@@ -86,7 +89,7 @@ def send_find(find_data):
     for agent,agent_data in agents.items():
         inputs = agent_data['inputs']
         print('agent data: ', agent_data)
-        query_data = {key:value for key,value in find_data.items() if key in inputs}
+        query_data = {key:value for key,value in find_data.items() if value and key in inputs}
         print(query_data)
         if not query_data:
             continue
@@ -155,6 +158,7 @@ async def slave(uri):
         global connected2hoarder
         connected2hoarder = False
         try:
+            print('connecting')
             async with websockets.connect(uri) as websocket:
                 global ws
                 ws = websocket
@@ -175,13 +179,15 @@ async def slave(uri):
                     await handle_hoarder_action(websocket, action, data)
         except Exception as e:
             print(type(e), e)
-            pass
 
 
 def service_master():
     global ws_loop
     ws_loop = asyncio.new_event_loop()
-    ws_loop.run_until_complete(slave('ws://localhost:5001/apa/bepa'))
+    try:
+        ws_loop.run_until_complete(slave('ws://localhost:5001/apa/bepa'))
+    except Exception as e:
+        print(type(e), e, 'crash and burn!')
 
 
 def cleanup_agents():

@@ -20,6 +20,8 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/search/<company>', methods=['GET','POST'])
+@app.route('/search/<company>/<department>', methods=['GET','POST'])
 @app.route('/search/<company>/<department>/<group>', methods=['GET','POST'])
 def search_page(company, department='', group=''):
     feeders = [values for values in websocket2feeder.values() if values['company'] == company]
@@ -44,6 +46,7 @@ def search_page(company, department='', group=''):
 def get_job(job):
     if job in job2reply:
         reply = job2reply[job]
+        print('getting job reply:', reply)
         result = dict(reply)
         del result['action']
         del result['job']
@@ -109,6 +112,7 @@ async def handle(websocket, path):
     try:
         async for message in websocket:
             data = json.loads(message)
+            print('data from feeder:', data)
             action = data['action']
             r = handle_action(websocket, action, data)
             if action != 'reply':

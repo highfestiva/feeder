@@ -19,14 +19,14 @@ h1,h2,h3 {
 	margin: 0 20%;
 	text-align: justify;
 }
-.result-row {
+.key-value-row {
 	margin-left: 1em;
 }
-.result-row label {
-	min-width: 5em;
+.key-value-row label {
+	min-width: 10em;
 	display: inline-block;
 }
-.result-row input {
+.key-value-row input {
 	min-width: 15em;
 	display: inline-block;
 }
