@@ -185,7 +185,7 @@ def service_master():
     global ws_loop
     ws_loop = asyncio.new_event_loop()
     try:
-        ws_loop.run_until_complete(slave('ws://localhost:5001/apa/bepa'))
+        ws_loop.run_until_complete(slave('ws://localhost:5000/feed'))
     except Exception as e:
         print(type(e), e, 'crash and burn!')
 
