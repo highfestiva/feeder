@@ -1,14 +1,18 @@
 {% for agent,agent_data in agents_data.items() %}
-  <h4>{{agent}}</h3>
-  {% for key,value in agent_data.items() %}
-    <div class="result-row key-value-row">
-      <label>{{key}}</label>
-      <input type="text" value="{{value}}"/>
-    </div>
-  {% endfor %}
-  {% if not agent_data %}
-    <div class="result-row key-value-row">
-      <p class="loading">Please wait, loading...</p>
-    </div>
-  {% endif %}
+  <div class="card card-body mb-3">
+    <h4>{{agent}}</h3>
+    {% for key,value in agent_data.items() %}
+      <div class="form-group row">
+        <label class="col-sm-2 col-form-label">{{key}}</label>
+        <div class="col-sm-10">
+          <input type="text" class="form-control" value="{{value}}" readonly/>
+        </div>
+      </div>
+    {% endfor %}
+    {% if not agent_data %}
+      <div class="alert alert-warning" role="alert">
+        Please wait, loading...
+      </div>
+    {% endif %}
+  </div>
 {% endfor %}

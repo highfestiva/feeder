@@ -12,8 +12,6 @@ from threading import Thread
 import websocket
 
 
-#hoarder_url = 'ws://localhost:5000/feed/'
-hoarder_url = 'ws://18.195.83.64:80/feed/'
 json_decoder = json.JSONDecoder(object_pairs_hook=OrderedDict)
 connected2hoarder = False
 company = 'hm'
@@ -160,13 +158,12 @@ def handle_hoarder_action(websock, action, data):
         assert False
 
 
-def service_master():
-    uri = hoarder_url
+def service_master(uri):
     while True:
         try:
             global connected2hoarder, ws
             connected2hoarder = False
-            print('connecting')
+            print('connecting to', uri)
             ws = websock = websocket.create_connection(uri)
             timestamp = datetime.now().isoformat()
             digest = hashlib.md5((timestamp+'|'+token).encode()).hexdigest()
@@ -211,8 +208,11 @@ def maint():
 
 
 def run():
+    import sys
+    host = '18.195.83.64' if not sys.argv[1:] else sys.argv[1]
+    hoarder_url = 'ws://%s/feed/' % host
     Thread(target=service_agents, daemon=True).start()
-    Thread(target=service_master, daemon=True).start()
+    Thread(target=service_master, daemon=True, args=(hoarder_url,)).start()
     maint()
 
 
