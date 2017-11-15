@@ -1,29 +1,76 @@
 #!/usr/bin/env python3
 
 import asyncio
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, redirect, render_template, request, send_from_directory
+from wtforms import Form, PasswordField, StringField, validators
+from flask_login import current_user, login_required, login_user, LoginManager, AnonymousUserMixin, UserMixin
 import hashlib
 import json
+import ldap_login
 from threading import Thread
 import websockets
 
 
 app = Flask(__name__)
+app.secret_key = 'non-secret'
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = '/'
 tokens = {'hm': '441234567890=='}
 websocket2feeder = {}
 jobindex = 1
 job2reply = {}
+userdb = {}
 
 
-@app.route('/')
+class LoginForm(Form):
+    username = StringField('Email Address', [validators.Length(min=6, max=35)])
+    password = PasswordField('Password', [validators.Length(min=4, max=35)])
+
+
+class User(UserMixin):
+    def __init__(self, username):
+        self.username = username
+        self.domain = None
+    @property
+    def is_authenticated(self):
+        return not not self.domain
+    def get_id(self):
+        return self.username
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    user = userdb.get(user_id)
+    if not user:
+        user = User(user_id)
+        userdb[user_id] = user
+    return user
+
+
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    return render_template('index.html')
+    form = LoginForm(request.form)
+    if request.method == 'POST' and form.validate():
+        username = form.username.data
+        password = form.password.data
+        domain = username.partition('@')[2].split('.')[-2]
+        fullname, groups = ldap_login.login(domain, username, password)
+        user = load_user(username)
+        user.domain = domain
+        user.username = username
+        login_user(user)
+        print('Logged in successfully.')
+        return redirect('/search')
+    return render_template('index.html', form=form)
 
 
-@app.route('/search/<company>', methods=['GET','POST'])
-@app.route('/search/<company>/<department>', methods=['GET','POST'])
-@app.route('/search/<company>/<department>/<group>', methods=['GET','POST'])
-def search_page(company, department='', group=''):
+@app.route('/search', methods=['GET','POST'])
+@app.route('/search/<department>', methods=['GET','POST'])
+@app.route('/search/<department>/<group>', methods=['GET','POST'])
+@login_required
+def search_page(department='', group=''):
+    company = current_user.domain
     feeders = [values for values in websocket2feeder.values() if values['company'] == company]
     feeder_names = [feeder['group'].partition('-')[2] for feeder in feeders]
     agents = [agent for feeder in feeders for agent in feeder['agent2data'].keys()]

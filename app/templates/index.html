@@ -1,13 +1,26 @@
 <!DOCTYPE html>
 <html>
  <head>
-  <link rel="stylesheet" type="text/css" href="/static/main.css">
-  <title>G</title>
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/css/bootstrap.min.css" integrity="sha384-PsH8R72JQ3SOdhVi3uxftmaW6Vc51MKb0q5P2rRUpPvrszuE4W1povHYgTpBfshb" crossorigin="anonymous"/>
+  <link rel="stylesheet" href="/static/login.css"/>
+  <title>Login</title>
  </head>
  <body>
-  <div class="content">
-    <h1>Welcome</h1>
-    <p>Hi there.</p>
+  <div class="content container">
+    <form method="POST" action="/" class="form-signin">
+      <h2 class="form-signin-heading">Hoarder login</h2>
+      {{ form.username.label(class_="sr-only") }}
+      {{ form.username(class_="form-control", placeholder="email", required=True, autofocus=True) }}
+      {% if form.username.errors %}
+        <ul class="errors">{% for error in form.username.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+      {% endif %}
+      {{ form.password.label(class_="sr-only") }}
+      {{ form.password(class_="form-control", placeholder="password", required=True) }}
+      {% if form.password.errors %}
+        <ul class="errors">{% for error in form.password.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+      {% endif %}
+      <button type="submit" class="btn btn-lg btn-primary btn-block"/>Login</button>
+    </form>
   </div>
  </body>
 </html>
