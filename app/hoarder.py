@@ -6,8 +6,9 @@ from wtforms import Form, PasswordField, StringField, validators
 from flask_login import current_user, login_required, login_user, LoginManager, AnonymousUserMixin, UserMixin
 import hashlib
 import json
-import ldap_login
+import time
 from threading import Thread
+from util import prt
 import websockets
 
 
@@ -55,12 +56,14 @@ def index():
         username = form.username.data
         password = form.password.data
         domain = username.partition('@')[2].split('.')[-2]
-        fullname, groups = ldap_login.login(domain, username, password)
+        fullname, groups = login(domain, username, password)
         user = load_user(username)
         user.domain = domain
-        user.username = username
+        user.fullname = fullname
+        user.groups = groups
         login_user(user)
-        print('Logged in successfully.')
+        assert current_user.fullname == fullname
+        prt('Logged in successfully.')
         return redirect('/search')
     return render_template('index.html', form=form)
 
@@ -69,8 +72,15 @@ def index():
 @app.route('/search/<department>', methods=['GET','POST'])
 @app.route('/search/<department>/<group>', methods=['GET','POST'])
 @login_required
-def search_page(department='', group=''):
+def auth_search_page(department='', group=''):
     company = current_user.domain
+    return search_page(company, department, group)
+
+
+@app.route('/test-search/<company>', methods=['GET','POST'])
+@app.route('/test-search/<company>/<department>', methods=['GET','POST'])
+@app.route('/test-search/<company>/<department>/<group>', methods=['GET','POST'])
+def search_page(company, department='', group=''):
     feeders = [values for values in websocket2feeder.values() if values['company'] == company]
     feeder_names = [feeder['group'].partition('-')[2] for feeder in feeders]
     agents = [agent for feeder in feeders for agent in feeder['agent2data'].keys()]
@@ -79,27 +89,30 @@ def search_page(department='', group=''):
     values = {k:v for k,v in request.values.items()}
     job = None
     if values:
-        global jobindex
-        job = jobid(jobindex)
-        jobindex += 1
-        job2reply[job] = {}
-        for websocket, feeder_data in websocket2feeder.items():
-            if feeder_data['company'] == company:
-                send2feeder(websocket, dict(action='find', job=job, data=dict(values)))
-    return render_template('search.html', company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs, job=job)
+        job = create_job()
+        data = dict(action='find', job=job, data=dict(values))
+        send2company(company, data)
+    return render_template('search.html', current_user=current_user, company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs, job=job)
 
 
 @app.route('/api/job/<job>')
 def get_job(job):
     if job in job2reply:
         reply = job2reply[job]
-        print('getting job reply:', reply)
+        prt('getting job reply:', reply)
         result = dict(reply)
         del result['action']
         del result['job']
         if request.values.get('dom') != None:
+            # print()
+            # print()
+            # print()
+            # print('data goes into template:', reply['data'])
+            # print()
+            # print()
+            # print()
             del result['data']
-            result['dom'] = render_template('result.html', agents_data=reply['data'])
+            result['dom'] = render_template('result.html', agents_hits=reply['data'])
         return jsonify(result)
 
 
@@ -108,18 +121,44 @@ def favicon():
     return send_from_directory('static', 'favicon.ico', mimetype='image/x-icon')
 
 
+def login(company, username, password):
+    job = create_job()
+    data = dict(action='login', job=job, domain=company, username=username, password=password)
+    if send2company(company, data):
+        for _ in range(100):
+            time.sleep(0.1)
+            if job2reply[job]:
+                fullname,groups = job2reply[job]['fullname'], job2reply[job]['groups']
+                del job2reply[job]
+                return fullname, groups
+    return None, None
+
+
+def create_job():
+    global jobindex
+    job = jobid(jobindex)
+    jobindex += 1
+    job2reply[job] = {}
+    return job
+
+
 def jobid(idx):
     return hashlib.md5(('whoot'+str(idx)+'?! 98732').encode()).hexdigest()[5:16]
 
 
+def send2company(company, data):
+    sends = 0
+    for websocket, feeder_data in websocket2feeder.items():
+        if feeder_data['company'] == company:
+            send2feeder(websocket, data)
+            sends += 1
+    return sends
+
+
 def send2feeder(websocket, obj):
+    prt('sending to feeder:', obj)
     data = json.dumps(obj)
-    print('sending to feeder:', data)
     main_event_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(websocket.send(data)))
-
-
-def present_result(job, reply):
-    job2reply[job] = reply
 
 
 def handle_action(websocket, action, data):
@@ -149,17 +188,21 @@ def handle_action(websocket, action, data):
             del agent2data[agent]
         return dict(status='ok')
     elif action == 'reply':
-        print('GOT REPLY:', action, data)
+        prt('GOT REPLY:', action, data)
         job = data['job']
-        present_result(job, data)
+        job2reply[job] = data
         return dict(status='ok')
+    else:
+        prt('BAD DATA FROM FEEDER:', action, data)
+        return dict(status='error')
 
 
 async def handle(websocket, path):
     try:
+        prt('server handling websocket data...')
         async for message in websocket:
             data = json.loads(message)
-            print('data from feeder:', data)
+            prt('data from feeder:', data)
             action = data['action']
             r = handle_action(websocket, action, data)
             if action != 'reply':
@@ -167,7 +210,7 @@ async def handle(websocket, path):
                 r['reference-action'] = action
                 await websocket.send(json.dumps(r))
     except Exception as e:
-        print(e)
+        prt(type(e), e)
     finally:
         if websocket in websocket2feeder:
             del websocket2feeder[websocket]

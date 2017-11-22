@@ -5,10 +5,12 @@ from collections import OrderedDict
 from datetime import datetime
 import hashlib
 import json
+import ldap_login
 import queue
 import socket
 import time
 from threading import Thread
+from util import prt
 import websocket
 
 
@@ -40,16 +42,17 @@ def handle_agent_action(sock, agent, action, data):
     elif action == 'reply':
         agents[agent]['time'] = time.time()
         job = data['id']
-        data = data['data']
+        data = dict(status=data['status'], data=data['data'])
         forward(agent, job, data)
         return dict(status='ok')
 
 
 def handle_agent(sock):
     agent = None
+    ok = False
     while True:
         try:
-            raw = sock.recv(32000).decode()
+            raw = sock.recv(int(1e8)).decode()
             #data = json.loads(raw)
             data = json_decoder.decode(raw)
             action = data['action']
@@ -61,6 +64,7 @@ def handle_agent(sock):
                 sock.send(json.dumps(r).encode())
             if action == 'register':
                 output_status()
+            ok = True
         except (ConnectionResetError, ConnectionAbortedError) as e:
             import traceback
             traceback.print_exc()
@@ -70,8 +74,11 @@ def handle_agent(sock):
                 output_status()
             break
         except json.decoder.JSONDecodeError as e:
-            print('data error from agent', agent, type(e), e)
-            print('raw data:', raw)
+            prt('data error from agent', agent, type(e), e)
+            prt('raw data:', raw)
+            if not ok:
+                break
+            ok = False
     sock.close()
 
 
@@ -85,19 +92,18 @@ def service_agents():
 
 
 def send_find(find_data):
-    print('find data:', find_data)
+    prt('find data:', find_data)
     sent_to = []
     for agent,agent_data in agents.items():
         inputs = agent_data['inputs']
-        print('agent data: ', agent_data)
+        prt('agent data: ', agent_data)
         query_data = {key:value for key,value in find_data.items() if value and key in inputs}
-        print(query_data)
+        prt(query_data)
         if not query_data:
             continue
-        query_data['action'] = 'find'
-        query_data['id'] = find_data['id']
+        send_data = dict(action='find', id=find_data['id'], query=query_data)
         sock = agent_data['socket']
-        sock.send(json.dumps(query_data).encode())
+        sock.send(json.dumps(send_data).encode())
         sent_to += [agent]
     return sent_to
 
@@ -123,7 +129,7 @@ def remove_agent(agent):
 
 def forward(agent, job, data):
     data['agent'] = agent
-    print('forwarding', data)
+    prt('forwarding', data)
     #ws_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(agent_job2queue[job].put(data)))
     agent_job2queue[job].put(data)
 
@@ -140,30 +146,39 @@ def handle_hoarder_action(websock, action, data):
         agents = send_find(find_data)
         agents_data = {agent:{} for agent in agents}
         recv_cnt = len(agents)
-        print('find waiting for %i answers...' % recv_cnt)
+        prt('find waiting for %i answers...' % recv_cnt)
         for cnt in range(recv_cnt): # explicit about count
             r = agent_job2queue[job].get()
-            print('find got a reply:', r)
+            prt('find got a reply:', r)
             agent = r['agent']
             agents_data[agent].update(r)
             del agents_data[agent]['agent']
             reply = dict(status=('ok' if cnt==recv_cnt-1 else 'ok-partial'), action='reply', job=data['job'], data=agents_data)
-            print('find partial reply:', reply)
+            prt('find partial reply:', reply)
             websock.send(json.dumps(reply))
-        print('find done')
+        prt('find done')
+    elif action == 'login':
+        username = data['username']
+        password = data['password']
+        domain = data['domain']
+        fullname, groups = ldap_login.login(domain, username, password)
+        prt('login:', fullname)
+        reply = dict(status='ok', action='reply', job=data['job'], fullname=fullname, groups=groups)
+        websock.send(json.dumps(reply))
     elif action == 'reply':
         pass
     else:
-        print(data)
+        prt(data)
         assert False
 
 
 def service_master(uri):
     while True:
+        raw = ''
         try:
             global connected2hoarder, ws
             connected2hoarder = False
-            print('connecting to', uri)
+            prt('connecting to', uri)
             ws = websock = websocket.create_connection(uri)
             timestamp = datetime.now().isoformat()
             digest = hashlib.md5((timestamp+'|'+token).encode()).hexdigest()
@@ -174,14 +189,14 @@ def service_master(uri):
                 add_agent(agent)
             while True:
                 raw = websock.recv()
-                print('raw', raw)
                 data = json.loads(raw)
                 connected2hoarder = True
-                print('got hoarder data:', data)
+                prt('got hoarder data:', data)
                 action = data['action']
                 handle_hoarder_action(websock, action, data)
         except Exception as e:
-            print(type(e), e)
+            prt(type(e), e)
+            prt(raw)
 
 
 def cleanup_agents():
@@ -194,8 +209,8 @@ def cleanup_agents():
 
 
 def output_status():
-    print('status: %s' % ('ok' if connected2hoarder else 'not connected'))
-    print('agents: %i' % len(agents))
+    prt('status: %s' % ('ok' if connected2hoarder else 'not connected'))
+    prt('agents: %i' % len(agents))
 
 
 def maint():
@@ -210,7 +225,7 @@ def maint():
 def run():
     import sys
     host = '18.195.83.64' if not sys.argv[1:] else sys.argv[1]
-    hoarder_url = 'ws://%s/feed/' % host
+    hoarder_url = 'ws://%s/api/' % host
     Thread(target=service_agents, daemon=True).start()
     Thread(target=service_master, daemon=True, args=(hoarder_url,)).start()
     maint()

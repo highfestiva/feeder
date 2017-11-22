@@ -1,17 +1,30 @@
-{% for agent,agent_data in agents_data.items() %}
+{% for agent,agent_data in agents_hits.items() %}
   <div class="card card-body mb-3">
     <h4>{{agent}}</h3>
-    {% for key,value in agent_data.items() %}
-      <div class="form-group row">
-        <label class="col-sm-2 col-form-label">{{key}}</label>
-        <div class="col-sm-10">
-          <input type="text" class="form-control" value="{{value}}" readonly/>
-        </div>
-      </div>
-    {% endfor %}
-    {% if not agent_data %}
+    {% if agent_data.status != 'ok' %}
       <div class="alert alert-warning" role="alert">
         Please wait, loading...
+      </div>
+    {% elif agent_data.data|length > 1 %}
+      {% for userkv in agent_data.data %}
+        <div class="form-group row">
+          <a href="" class="col-sm-12">{%for key,value in userkv.items()%}{{key}}: {{value}}, {%endfor%}</a>
+        </div>
+      {% endfor %}
+    {% elif agent_data.data %}
+      {% for userkv in agent_data.data %}
+        {% for key,value in userkv.items() %}
+          <div class="form-group row">
+            <label class="col-sm-2 col-form-label">{{key}}</label>
+            <div class="col-sm-10">
+              <input type="text" class="form-control" value="{{value}}" readonly/>
+            </div>
+          </div>
+        {% endfor %}
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-warning" role="alert">
+        No users found.
       </div>
     {% endif %}
   </div>
