@@ -1,2 +1,3 @@
 ldap-*.data
 __pycache__/
+dummy*

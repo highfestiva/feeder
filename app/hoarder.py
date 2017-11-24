@@ -8,7 +8,7 @@ import hashlib
 import json
 import time
 from threading import Thread
-from util import prt
+from util import prt, uniq
 import websockets
 
 
@@ -64,7 +64,7 @@ def index():
         login_user(user)
         assert current_user.fullname == fullname
         prt('Logged in successfully.')
-        return redirect('/search')
+        return redirect(request.args['next'])
     return render_template('index.html', form=form)
 
 
@@ -85,35 +85,49 @@ def search_page(company, department='', group=''):
     feeder_names = [feeder['group'].partition('-')[2] for feeder in feeders]
     agents = [agent for feeder in feeders for agent in feeder['agent2data'].keys()]
     inputs = [inp for feeder in feeders for agent_data in feeder['agent2data'].values() for inp in agent_data['inputs']]
-    inputs = set(inputs)
-    values = {k:v for k,v in request.values.items()}
+    inputs = uniq(inputs)
+    reqvalues = {k:v for k,v in request.values.items()}
     job = None
-    if values:
+    if reqvalues:
         job = create_job()
-        data = dict(action='find', job=job, data=dict(values))
+        data = dict(action='find', job=job, data=dict(reqvalues))
         send2company(company, data)
-    return render_template('search.html', current_user=current_user, company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs, job=job)
+    return render_template('search.html', current_user=current_user, company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs, job=job, reqvalues=reqvalues)
+
+
+@app.route('/cleanse', methods=['POST'])
+@login_required
+def cleanse_page():
+    return 'ok'
 
 
 @app.route('/api/job/<job>')
 def get_job(job):
+    result = dict(status='pending')
     if job in job2reply:
-        reply = job2reply[job]
+        websocket,reply = job2reply[job]
         prt('getting job reply:', reply)
         result = dict(reply)
         del result['action']
         del result['job']
         if request.values.get('dom') != None:
-            # print()
-            # print()
-            # print()
-            # print('data goes into template:', reply['data'])
-            # print()
-            # print()
-            # print()
             del result['data']
-            result['dom'] = render_template('result.html', agents_hits=reply['data'])
-        return jsonify(result)
+            agent_hits = reply['data']
+            cleanses = {}
+            allow_cleanse = True
+            if websocket in websocket2feeder:
+                feeder_data = websocket2feeder[websocket]
+                feeder_datas = get_company_feeders(feeder_data['company']).values()
+                for feeder_data in feeder_datas:
+                    for agent,init_data in feeder_data['agent2data'].items():
+                        agent_hit_user = agent_hits[agent]['data']
+                        allow_cleanse &= (len(agent_hit_user) == 1)
+                        for user in agent_hit_user:
+                            cleanses.update({k:user[k] for k in init_data['cleanses']})
+            if not cleanses:
+                allow_cleanse = False
+            result['dom'] = render_template('result.html', agents_hits=agent_hits, cleanses=cleanses, allow_cleanse=allow_cleanse)
+    return jsonify(result)
 
 
 @app.route('/favicon.ico')
@@ -127,8 +141,9 @@ def login(company, username, password):
     if send2company(company, data):
         for _ in range(100):
             time.sleep(0.1)
-            if job2reply[job]:
-                fullname,groups = job2reply[job]['fullname'], job2reply[job]['groups']
+            if job in job2reply:
+                _,reply = job2reply[job]
+                fullname,groups = reply['fullname'], reply['groups']
                 del job2reply[job]
                 return fullname, groups
     return None, None
@@ -138,7 +153,6 @@ def create_job():
     global jobindex
     job = jobid(jobindex)
     jobindex += 1
-    job2reply[job] = {}
     return job
 
 
@@ -147,12 +161,14 @@ def jobid(idx):
 
 
 def send2company(company, data):
-    sends = 0
-    for websocket, feeder_data in websocket2feeder.items():
-        if feeder_data['company'] == company:
-            send2feeder(websocket, data)
-            sends += 1
-    return sends
+    websockets = get_company_feeders(company).keys()
+    for websocket in websockets:
+        send2feeder(websocket, data)
+    return len(websockets)
+
+
+def get_company_feeders(company):
+    return {w:fd for w,fd in websocket2feeder.items() if fd['company']==company}
 
 
 def send2feeder(websocket, obj):
@@ -178,7 +194,7 @@ def handle_action(websocket, action, data):
         return dict(status='ok')
     elif action == 'add-agent':
         agent = data['agent']
-        agent_data = dict(inputs=data['inputs'], outputs=data['outputs'])
+        agent_data = dict(inputs=data['inputs'], cleanses=data['cleanses'], outputs=data['outputs'])
         websocket2feeder[websocket]['agent2data'][agent] = agent_data
         return dict(status='ok')
     elif action == 'remove-agent':
@@ -190,7 +206,7 @@ def handle_action(websocket, action, data):
     elif action == 'reply':
         prt('GOT REPLY:', action, data)
         job = data['job']
-        job2reply[job] = data
+        job2reply[job] = (websocket,data)
         return dict(status='ok')
     else:
         prt('BAD DATA FROM FEEDER:', action, data)
@@ -199,7 +215,6 @@ def handle_action(websocket, action, data):
 
 async def handle(websocket, path):
     try:
-        prt('server handling websocket data...')
         async for message in websocket:
             data = json.loads(message)
             prt('data from feeder:', data)

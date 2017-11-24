@@ -10,7 +10,7 @@ import queue
 import socket
 import time
 from threading import Thread
-from util import prt
+from util import prt, uniq
 import websocket
 
 
@@ -31,9 +31,11 @@ agent_job2queue = {
 def handle_agent_action(sock, agent, action, data):
     if action == 'register':
         agent = data['agent']
-        inputs = data['inputs']
-        outputs = data['outputs']
-        agents[agent] = dict(time=time.time(), socket=sock, inputs=(inputs), outputs=set(outputs))
+        inputs = uniq(data['inputs'])
+        cleanses = uniq(data['cleanses'])
+        outputs = uniq(data['outputs'])
+        assert all(e in outputs for e in inputs+cleanses)
+        agents[agent] = dict(time=time.time(), socket=sock, inputs=inputs, cleanses=cleanses, outputs=outputs)
         add_agent(agent)
         return dict(status='ok', agent=agent)
     elif action == 'ping':
@@ -95,7 +97,7 @@ def send_find(find_data):
     prt('find data:', find_data)
     sent_to = []
     for agent,agent_data in agents.items():
-        inputs = agent_data['inputs']
+        inputs = set(agent_data['inputs'])
         prt('agent data: ', agent_data)
         query_data = {key:value for key,value in find_data.items() if value and key in inputs}
         prt(query_data)
@@ -113,7 +115,7 @@ def add_agent(agent):
     if ws:
         websock = ws
         a = agents[agent]
-        message = json.dumps(dict(action='add-agent', agent=agent, inputs=list(a['inputs']), outputs=list(a['outputs'])))
+        message = json.dumps(dict(action='add-agent', agent=agent, inputs=a['inputs'], cleanses=a['cleanses'], outputs=a['outputs']))
         #ws_loop.call_soon_threadsafe(lambda: asyncio.ensure_future(websock.send(message)))
         websock.send(message)
 
@@ -180,6 +182,7 @@ def service_master(uri):
             connected2hoarder = False
             prt('connecting to', uri)
             ws = websock = websocket.create_connection(uri)
+            print('after connect')
             timestamp = datetime.now().isoformat()
             digest = hashlib.md5((timestamp+'|'+token).encode()).hexdigest()
             digest = timestamp + '|' + digest
@@ -195,8 +198,13 @@ def service_master(uri):
                 action = data['action']
                 handle_hoarder_action(websock, action, data)
         except Exception as e:
-            prt(type(e), e)
-            prt(raw)
+            import os
+            env = set(k.lower() for k in os.environ.keys())
+            if 'http_proxy' in env or 'https_proxy' in env:
+                prt('Turn off proxy?')
+            else:
+                prt(type(e), e)
+                prt(raw)
 
 
 def cleanup_agents():
@@ -225,7 +233,7 @@ def maint():
 def run():
     import sys
     host = '18.195.83.64' if not sys.argv[1:] else sys.argv[1]
-    hoarder_url = 'ws://%s/api/' % host
+    hoarder_url = 'ws://%s/feed/' % host
     Thread(target=service_agents, daemon=True).start()
     Thread(target=service_master, daemon=True, args=(hoarder_url,)).start()
     maint()

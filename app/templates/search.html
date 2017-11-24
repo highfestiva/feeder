@@ -42,11 +42,12 @@
           <div class="form-group row">
             <label class="col-sm-2 col-form-label">{{inp}}</label>
             <div class="col-sm-10">
-              <input type="text" class="form-control" name="{{inp}}"/>
+              <input type="text" class="form-control" name="{{inp}}" value="{{reqvalues[inp]}}"/>
             </div>
           </div>
         {% endfor %}
-        <button type="submit" class="btn btn-primary"/>Submit</button>
+        <button type="submit" class="btn btn-primary">Search</button>
+        <button type="button" class="btn btn-cleanse" disabled>Cleanse</button>
       </div>
     </form>
     {% if job %}
@@ -56,6 +57,7 @@
     </div>
     <script>
       job.loadDom(".result", "/api/job/{{job}}?dom");
+      job.postCleanseOn(".btn-cleanse", "#cleanse-data");
     </script>
     {% endif %}
   </div>

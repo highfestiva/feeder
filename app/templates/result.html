@@ -15,7 +15,7 @@
       {% for userkv in agent_data.data %}
         {% for key,value in userkv.items() %}
           <div class="form-group row">
-            <label class="col-sm-2 col-form-label">{{key}}</label>
+            <label class="col-sm-2 col-form-label {% if key not in cleanses %}text-muted{% endif %}">{{key}}</label>
             <div class="col-sm-10">
               <input type="text" class="form-control" value="{{value}}" readonly/>
             </div>
@@ -29,3 +29,14 @@
     {% endif %}
   </div>
 {% endfor %}
+
+{% if allow_cleanse %}
+  <form id="cleanse-data" method="POST" action="/cleanse">
+    {% for key,value in cleanses.items() %}
+      <input type="text" name="{{key}}" value="{{value}}"/>
+    {% endfor %}
+  </form>
+  <script>
+    $('.btn-cleanse').addClass('btn-danger').prop('disabled', false);
+  </script>
+{% endif %}

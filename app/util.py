@@ -1,3 +1,6 @@
+from collections import OrderedDict
+
+
 def prt(*args):
     def _cleandict(a):
         if isinstance(a, dict):
@@ -8,3 +11,7 @@ def prt(*args):
         return a
     args = [_cleandict(a) for a in args]
     print(*args)
+
+
+def uniq(l):
+    return list(OrderedDict((e,1) for e in l).keys())
