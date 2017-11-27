@@ -31,7 +31,7 @@
 {% endfor %}
 
 {% if allow_cleanse %}
-  <form id="cleanse-data" method="POST" action="/cleanse">
+  <form id="cleanse-data" class="d-none" method="POST" action="/cleanse">
     {% for key,value in cleanses.items() %}
       <input type="text" name="{{key}}" value="{{value}}"/>
     {% endfor %}

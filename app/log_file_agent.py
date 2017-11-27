@@ -3,6 +3,7 @@
 from argparse import ArgumentParser
 from collections import OrderedDict, defaultdict
 from glob import glob
+import hashlib
 import json
 import re
 import socket
@@ -39,7 +40,7 @@ def find_output_fields(options):
 
 
 def list_users(options, list_dict):
-    fields = options.input
+    fields = options.keys or options.input
     user_dict = defaultdict(dict)
     for line_dict in list_dict:
         user_key = '~'.join(line_dict[search_key] for search_key in fields)
@@ -49,12 +50,12 @@ def list_users(options, list_dict):
 
 
 def hashrepl(s):
-    s = t = s.encode()
-    h = b''
+    s = t = s.encode() # from bytes...
+    h = '' # to ascii
     while len(h) < len(s):
         h += hashlib.md5(t).hexdigest()
         t = t[8:]
-    return h[:len(s)].decode()
+    return h[:len(s)]
 
 
 def send_cmd(options, sock, action, data):
@@ -91,11 +92,12 @@ def handle(options, sock, action, data):
         uds = [eval(s) for s in common] if common else [] # back from strs to dicts
         # Split up in [user1_dict, user2_dict, ...]
         users = list_users(options, uds)
+        print(users)
         outputs = users[:10] # this is our result
         # if we have more than one hit, return only part of the data
         if len(outputs) > 1:
             outputs = [OrderedDict((k,o[k]) for k in options.input) for o in outputs]
-        else:
+        elif outputs:
             # place the cleanse fields first (and in order)
             o = OrderedDict(outputs[0])
             for cleanse in reversed(options.cleanse):
@@ -107,24 +109,30 @@ def handle(options, sock, action, data):
         send_cmd(options, sock, 'reply', data)
     elif action == 'cleanse':
         query = data['query']
-        searches = ['%s%s%s'%(k,options.separator,query[v]) for k in options.cleanse]
-        replacements = ['%s%s%s'%(k,options.separator,hashrepl(query[v])) for k in options.cleanse]
+        searches = ['%s%s%s'%(k,options.separator,query[k]) for k in options.cleanse]
+        replacements = ['%s%s%s'%(k,options.separator,hashrepl(query[k])) for k in options.cleanse]
         search_replace = list(zip(searches, replacements))
-        assert len(query) == len(srs)
+        assert len(query) == len(search_replace)
+        lines, total_lines = 0, 0
         for f,line in traverse_logs(options, mode='r+b'):
+            total_lines += 1
             rline = line
             for search,replacement in search_replace:
                 rline = rline.replace(search, replacement)
             if rline != line:
                 assert len(rline.encode(options.encoding)) == len(line.encode(options.encoding))
-                f.seek(-len(line.decode()), 2)
-                f.write(rline)
+                f.seek(-len(line.encode()), 1)
+                f.write(rline.encode())
+                lines += 1
+        data = dict(status='ok', id=data['id'], data=dict(lines=lines, total_lines=total_lines))
+        send_cmd(options, sock, 'reply', data)
 
 
 parser = ArgumentParser()
 parser.add_argument('name', help='name of agent')
 parser.add_argument('--feeder', default='localhost:3344', help='tcp address of feeder')
 parser.add_argument('--input', nargs='+', help='what search fields to expose to call center')
+parser.add_argument('--keys', nargs='*', help='customer key fields, e.g. customer number')
 parser.add_argument('--cleanse', nargs='+', help='what fields to cleanse for anonymzation')
 parser.add_argument('--encoding', default='utf-8', help='log file encoding')
 parser.add_argument('--log-wildcard', nargs='+', help='wildcard of log files, for instance /var/log/myapp/*.log')
@@ -147,9 +155,9 @@ if options.verbose:
     print('outputs:')
     for o in options.outputs:
         print(' -', o)
-for i in options.input+options.cleanse:
+for i in options.input+options.cleanse+options.keys:
     if i not in options.outputs:
-        print('ERROR: input/cleanse field %s not available in logs' % i)
+        print('ERROR: input/cleanse/key field %s not available in logs' % i)
         import sys
         sys.exit(1)
 

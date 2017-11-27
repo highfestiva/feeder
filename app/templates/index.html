@@ -20,6 +20,7 @@
       {% if form.password.errors %}
         <ul class="errors">{% for error in form.password.errors %}<li>{{ error }}</li>{% endfor %}</ul>
       {% endif %}
+      <input type="hidden" name="next" value="{{next}}"/>
       <button type="submit" class="btn btn-lg btn-primary btn-block"/>Login</button>
     </form>
   </div>

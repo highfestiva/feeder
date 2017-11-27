@@ -11,6 +11,7 @@ import socket
 import time
 from threading import Thread
 from util import prt, uniq
+import uuid
 import websocket
 
 
@@ -23,7 +24,6 @@ token = '441234567890=='
 agents = {
 }
 ws = None
-agent_job = 1
 agent_job2queue = {
 }
 
@@ -93,17 +93,17 @@ def service_agents():
         Thread(target=handle_agent, args=(conn,)).start()
 
 
-def send_find(find_data):
-    prt('find data:', find_data)
+def send_req(action, fields, req_data):
+    prt(action, 'data:', req_data)
     sent_to = []
     for agent,agent_data in agents.items():
-        inputs = set(agent_data['inputs'])
+        agent_fields = set(agent_data[fields])
         prt('agent data: ', agent_data)
-        query_data = {key:value for key,value in find_data.items() if value and key in inputs}
-        prt(query_data)
+        query_data = {key:value for key,value in req_data.items() if value and key in agent_fields}
+        prt('query data:', query_data)
         if not query_data:
             continue
-        send_data = dict(action='find', id=find_data['id'], query=query_data)
+        send_data = dict(action=action, id=req_data['id'], query=query_data)
         sock = agent_data['socket']
         sock.send(json.dumps(send_data).encode())
         sent_to += [agent]
@@ -137,28 +137,30 @@ def forward(agent, job, data):
 
 
 def handle_hoarder_action(websock, action, data):
-    if action == 'find':
-        global agent_job, agent_job2queue
-        find_data = dict(data['data'])
-        find_data['id'] = agent_job
-        job = agent_job
-        agent_job += 1
+    if action in ('find', 'cleanse'):
+        global agent_job2queue
+        req_data = dict(data['data'])
+        assert req_data
+        job = str(uuid.uuid4())
+        req_data['id'] = job
         #agent_job2queue[job] = asyncio.Queue()
         agent_job2queue[job] = queue.Queue()
-        agents = send_find(find_data)
+        fields = 'inputs' if action=='find' else 'cleanses'
+        agents = send_req(action, fields, req_data)
         agents_data = {agent:{} for agent in agents}
         recv_cnt = len(agents)
-        prt('find waiting for %i answers...' % recv_cnt)
+        prt('%s waiting for %i answers from %i agents...' % (action, recv_cnt, len(agents)))
         for cnt in range(recv_cnt): # explicit about count
             r = agent_job2queue[job].get()
-            prt('find got a reply:', r)
+            prt(action, 'got a reply:', r)
             agent = r['agent']
             agents_data[agent].update(r)
             del agents_data[agent]['agent']
             reply = dict(status=('ok' if cnt==recv_cnt-1 else 'ok-partial'), action='reply', job=data['job'], data=agents_data)
-            prt('find partial reply:', reply)
+            reply['reference-action'] = action
+            prt(action, 'partial reply:', reply)
             websock.send(json.dumps(reply))
-        prt('find done')
+        prt(action, 'done')
     elif action == 'login':
         username = data['username']
         password = data['password']
@@ -166,6 +168,7 @@ def handle_hoarder_action(websock, action, data):
         fullname, groups = ldap_login.login(domain, username, password)
         prt('login:', fullname)
         reply = dict(status='ok', action='reply', job=data['job'], fullname=fullname, groups=groups)
+        reply['reference-action'] = action
         websock.send(json.dumps(reply))
     elif action == 'reply':
         pass
@@ -182,7 +185,7 @@ def service_master(uri):
             connected2hoarder = False
             prt('connecting to', uri)
             ws = websock = websocket.create_connection(uri)
-            print('after connect')
+            prt('after connect')
             timestamp = datetime.now().isoformat()
             digest = hashlib.md5((timestamp+'|'+token).encode()).hexdigest()
             digest = timestamp + '|' + digest

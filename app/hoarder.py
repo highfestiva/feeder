@@ -9,6 +9,7 @@ import json
 import time
 from threading import Thread
 from util import prt, uniq
+import uuid
 import websockets
 
 
@@ -19,7 +20,6 @@ login_manager.init_app(app)
 login_manager.login_view = '/'
 tokens = {'hm': '441234567890=='}
 websocket2feeder = {}
-jobindex = 1
 job2reply = {}
 userdb = {}
 
@@ -51,6 +51,7 @@ def load_user(user_id):
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    nxt = request.values.get('next', '/search')
     form = LoginForm(request.form)
     if request.method == 'POST' and form.validate():
         username = form.username.data
@@ -64,41 +65,62 @@ def index():
         login_user(user)
         assert current_user.fullname == fullname
         prt('Logged in successfully.')
-        return redirect(request.args['next'])
-    return render_template('index.html', form=form)
+        return redirect(nxt)
+    return render_template('index.html', form=form, next=nxt)
 
 
 @app.route('/search', methods=['GET','POST'])
-@app.route('/search/<department>', methods=['GET','POST'])
-@app.route('/search/<department>/<group>', methods=['GET','POST'])
 @login_required
-def auth_search_page(department='', group=''):
+def auth_search_page():
     company = current_user.domain
-    return search_page(company, department, group)
+    return search_page(company)
 
 
 @app.route('/test-search/<company>', methods=['GET','POST'])
-@app.route('/test-search/<company>/<department>', methods=['GET','POST'])
-@app.route('/test-search/<company>/<department>/<group>', methods=['GET','POST'])
-def search_page(company, department='', group=''):
-    feeders = [values for values in websocket2feeder.values() if values['company'] == company]
+def search_page(company):
+    feeders = get_company_feeders(company).values()
     feeder_names = [feeder['group'].partition('-')[2] for feeder in feeders]
     agents = [agent for feeder in feeders for agent in feeder['agent2data'].keys()]
     inputs = [inp for feeder in feeders for agent_data in feeder['agent2data'].values() for inp in agent_data['inputs']]
     inputs = uniq(inputs)
-    reqvalues = {k:v for k,v in request.values.items()}
     job = None
-    if reqvalues:
+    reqvalues = {k:v for k,v in request.values.items()} # how to translate to dict
+    msg = reqvalues.get('msg')
+    job = reqvalues.get('job')
+    if msg:
+        pass
+    elif job:
+        pass
+    elif reqvalues:
         job = create_job()
+        print(reqvalues)
         data = dict(action='find', job=job, data=dict(reqvalues))
+        print('sending search:', data)
         send2company(company, data)
-    return render_template('search.html', current_user=current_user, company=company, department=department, group=group, feeders=feeder_names, agents=agents, inputs=inputs, job=job, reqvalues=reqvalues)
+    return render_template('search.html', current_user=current_user, company=company, feeders=feeder_names, agents=agents, inputs=inputs, job=job, reqvalues=reqvalues, usrmsg=msg)
 
 
 @app.route('/cleanse', methods=['POST'])
 @login_required
 def cleanse_page():
-    return 'ok'
+    company = current_user.domain
+    return test_cleanse_page(company)
+
+
+@app.route('/test-cleanse/<company>', methods=['POST'])
+def test_cleanse_page(company):
+    feeders = get_company_feeders(company).values()
+    cleanses = [cleanse for feeder in feeders for agent_data in feeder['agent2data'].values() for cleanse in agent_data['cleanses']]
+    reqvalues = {k:request.values[k] for k in cleanses}
+    jobq = ''
+    if 'job' in reqvalues:
+        jobq = '?job=' + reqvalues['job']
+    elif reqvalues:
+        job = create_job()
+        data = dict(action='cleanse', job=job, data=dict(reqvalues))
+        send2company(company, data)
+        jobq = '?job='+job
+    return redirect('/search'+jobq)
 
 
 @app.route('/api/job/<job>')
@@ -112,21 +134,28 @@ def get_job(job):
         del result['job']
         if request.values.get('dom') != None:
             del result['data']
-            agent_hits = reply['data']
-            cleanses = {}
-            allow_cleanse = True
-            if websocket in websocket2feeder:
-                feeder_data = websocket2feeder[websocket]
-                feeder_datas = get_company_feeders(feeder_data['company']).values()
-                for feeder_data in feeder_datas:
-                    for agent,init_data in feeder_data['agent2data'].items():
-                        agent_hit_user = agent_hits[agent]['data']
-                        allow_cleanse &= (len(agent_hit_user) == 1)
-                        for user in agent_hit_user:
-                            cleanses.update({k:user[k] for k in init_data['cleanses']})
-            if not cleanses:
-                allow_cleanse = False
-            result['dom'] = render_template('result.html', agents_hits=agent_hits, cleanses=cleanses, allow_cleanse=allow_cleanse)
+            if reply['reference-action'] == 'find':
+                agent_hits = reply['data']
+                cleanses = {}
+                allow_cleanse = True
+                if websocket in websocket2feeder:
+                    feeder_data = websocket2feeder[websocket]
+                    feeder_datas = get_company_feeders(feeder_data['company']).values()
+                    for feeder_data in feeder_datas:
+                        for agent,init_data in feeder_data['agent2data'].items():
+                            agent_hit_user = agent_hits[agent]['data']
+                            allow_cleanse &= (len(agent_hit_user) == 1)
+                            for user in agent_hit_user:
+                                cleanses.update({k:user[k] for k in init_data['cleanses'] if k in user})
+                if not cleanses:
+                    allow_cleanse = False
+                result['dom'] = render_template('search-result.html', agents_hits=agent_hits, cleanses=cleanses, allow_cleanse=allow_cleanse)
+            else:
+                line_cnt = 0
+                for agent, agent_data in reply['data'].items():
+                    if agent_data['status'] == 'ok':
+                        line_cnt += agent_data['data']['lines']
+                result['dom'] = render_template('cleanse-result.html', line_cnt=line_cnt)
     return jsonify(result)
 
 
@@ -150,14 +179,7 @@ def login(company, username, password):
 
 
 def create_job():
-    global jobindex
-    job = jobid(jobindex)
-    jobindex += 1
-    return job
-
-
-def jobid(idx):
-    return hashlib.md5(('whoot'+str(idx)+'?! 98732').encode()).hexdigest()[5:16]
+    return str(uuid.uuid4())
 
 
 def send2company(company, data):
