@@ -117,9 +117,12 @@ def handle(options, sock, action, data):
         for f,line in traverse_logs(options, mode='r+b'):
             total_lines += 1
             rline = line
+            replacements = 0
             for search,replacement in search_replace:
-                rline = rline.replace(search, replacement)
-            if rline != line:
+                if search in rline:
+                    rline = rline.replace(search, replacement)
+                    replacements += 1
+            if replacements >= 2:
                 assert len(rline.encode(options.encoding)) == len(line.encode(options.encoding))
                 f.seek(-len(line.encode()), 1)
                 f.write(rline.encode())
